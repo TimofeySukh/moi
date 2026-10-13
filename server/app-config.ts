@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'path'
 
-import type { ClientAppConfig, ExperimentalFeatures } from '@/lib/types'
+import type { AppEnvironment, ClientAppConfig, ExperimentalFeatures } from '@/lib/types'
 import { EXPERIMENTAL_DEFAULTS } from '@/lib/experimental'
 
 import { DATA_DIR } from './data-dir'
@@ -18,9 +18,10 @@ import { DATA_DIR } from './data-dir'
 // warns on stderr and falls back per-key, so a broken config never takes the
 // CLI or server down with it.
 export type AppConfig = {
-  // Cloud demo deployment: workspace creation is blocked (UI shows the
+  environment: AppEnvironment
+  // Demo mode: workspace creation is blocked (UI shows the
   // cloud-demo promo dialog instead) and `moi` system commands are disabled.
-  cloudDemo: boolean
+  demo: boolean
   experimental: ExperimentalFeatures
   // Link target for the cloud-demo promo dialog.
   demoInstallUrl: string
@@ -39,7 +40,8 @@ export type CloudflareAccessConfig = {
 type DeploymentConfig = Omit<AppConfig, 'experimental'>
 
 const DEFAULTS: AppConfig = {
-  cloudDemo: false,
+  environment: 'local',
+  demo: false,
   experimental: { ...EXPERIMENTAL_DEFAULTS },
   demoInstallUrl: 'https://moi.computer',
   cloudflareAccess: null
@@ -58,6 +60,13 @@ function parseBool(raw: string | undefined): boolean | undefined {
   const value = raw.trim().toLowerCase()
   if (value === '1' || value === 'true') return true
   if (value === '0' || value === 'false') return false
+  return undefined
+}
+
+function parseEnvironment(raw: unknown): AppEnvironment | undefined {
+  if (raw === undefined) return undefined
+  if (raw === 'local' || raw === 'cloud') return raw
+  warn('ignoring environment — expected "local" or "cloud"')
   return undefined
 }
 
@@ -153,7 +162,7 @@ function readConfigFile(file: string): Record<string, unknown> {
     // Only a missing file is silent (the normal local case). Anything else —
     // permissions, mount errors — is loud: a deployment relying on config.json
     // must not boot un-gated without a diagnostic. Deployments that need the
-    // demo gate guaranteed should pin MOI_CLOUD_DEMO=1 in the environment,
+    // demo gate guaranteed should pin MOI_DEMO=1 in the environment,
     // which has no read-failure mode.
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
       warn(`could not read ${file}: ${err instanceof Error ? err.message : String(err)}`)
@@ -176,9 +185,11 @@ function readConfigFile(file: string): Record<string, unknown> {
 
 function fileValues(raw: Record<string, unknown>): Partial<DeploymentConfig> {
   const out: Partial<DeploymentConfig> = {}
-  if (raw.cloudDemo !== undefined) {
-    if (typeof raw.cloudDemo === 'boolean') out.cloudDemo = raw.cloudDemo
-    else warn('ignoring "cloudDemo" — expected a boolean')
+  const environment = parseEnvironment(raw.environment)
+  if (environment !== undefined) out.environment = environment
+  if (raw.demo !== undefined) {
+    if (typeof raw.demo === 'boolean') out.demo = raw.demo
+    else warn('ignoring "demo" — expected a boolean')
   }
   if (raw.demoInstallUrl !== undefined) {
     if (typeof raw.demoInstallUrl === 'string') out.demoInstallUrl = raw.demoInstallUrl
@@ -196,7 +207,8 @@ export function loadAppConfig(
   const raw = readConfigFile(file)
   const fromFile = fileValues(raw)
   const fromEnv: Partial<DeploymentConfig> = {
-    cloudDemo: parseBool(env.MOI_CLOUD_DEMO),
+    environment: parseEnvironment(env.MOI_ENVIRONMENT),
+    demo: parseBool(env.MOI_DEMO),
     demoInstallUrl: parseString(env.MOI_DEMO_INSTALL_URL)
   }
   const merged = { ...DEFAULTS, ...fromFile }
@@ -224,7 +236,7 @@ export function getAppConfig(): AppConfig {
 }
 
 // Test seam: drop the cached config so the next getAppConfig() re-resolves
-// (tests point MOI_DATA_DIR elsewhere or set MOI_CLOUD_DEMO).
+// (tests point MOI_DATA_DIR elsewhere or set MOI_DEMO).
 export function resetAppConfig(): void {
   _config = null
 }
@@ -232,6 +244,6 @@ export function resetAppConfig(): void {
 // The only shape that reaches the browser (GET /api/config). Server-only keys
 // added to AppConfig later stay out unless explicitly forwarded here.
 export function clientAppConfig(): ClientAppConfig {
-  const { cloudDemo, experimental, demoInstallUrl } = getAppConfig()
-  return { cloudDemo, experimental: { ...experimental }, demoInstallUrl }
+  const { environment, demo, experimental, demoInstallUrl } = getAppConfig()
+  return { environment, demo, experimental: { ...experimental }, demoInstallUrl }
 }

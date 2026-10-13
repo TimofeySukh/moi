@@ -3159,7 +3159,7 @@ function exitIfDemoBlocked(): void {
   if (!invoked || invoked === 'version' || invoked === 'start') return
   if (!(invoked in systemCommands)) return
   const config = getAppConfig()
-  if (!config.cloudDemo) return
+  if (!config.demo) return
   console.log(
     '\n' +
       pc.yellow('◆') +
