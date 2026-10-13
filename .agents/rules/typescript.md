@@ -11,3 +11,5 @@ alwaysApply: false
 - Reuse existing types from `lib/types.ts` instead of redefining equivalent shapes.
 - Prefer `type` over `interface` for consistency.
 - Use `import type` for type-only imports.
+- Prefer `undefined` for missing or unset values in internal types, return values, and state. Use `null` only when an external API or an existing public or saved-data contract requires it.
+- Do not give `null` and `undefined` different meanings in internal state.
