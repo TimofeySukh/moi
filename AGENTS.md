@@ -8,7 +8,7 @@ Agent chat UI powered by Claude Agent SDK, Bun, React, and Tailwind.
 
 ## Agent context layout
 
-`AGENTS.md` files (root, `client/`, `server/`) are the canonical instructions; every `CLAUDE.md` is a symlink to its sibling `AGENTS.md`. Edit the `AGENTS.md` files, never the symlinks. Rules and skills likewise live in agent-neutral directories, with symlinks for Claude Code:
+`AGENTS.md` files (root, `client/`, `server/`) are the canonical instructions. Claude Code v2.1.277+ reads them directly when no `CLAUDE.md` or `CLAUDE.local.md` exists in the working directory or above it. Keep project instructions in `AGENTS.md`. Rules and skills live in agent-neutral directories, with symlinks for Claude Code:
 
 - `.agents/rules/` — topic rules (canonical). `.claude/rules` is a symlink to it, so Claude Code auto-loads them. **Other agents: read the relevant rule before editing matching files:**
   - `product-language.md` (always) — `moi` casing, sentence case, terminology, and action copy
