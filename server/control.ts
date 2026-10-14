@@ -16,7 +16,9 @@ import { callFunctionEphemeral, parseFunctionPath } from './functions'
 import { processIcon } from './icon'
 import { loadLayout, saveLayout } from './layout'
 import { publishEvent } from './events'
+import { isFromMoiUser } from './peer-user'
 import { findWorkspaceForPath, listWorkspaces, registerWorkspace } from './registry'
+import { requiredEnvFor } from './required-env'
 import { executeScratchOp } from './scratchpad-executor'
 import { readScratchpadImage, readScratchpadShapes } from './scratchpad'
 import { relayScratchOp } from './scratchpad-relay'
@@ -33,8 +35,19 @@ import {
   type WorkspaceConfigPatch
 } from './workspace-config'
 import { VERSION } from './version'
+import {
+  getWorkspaceEnvView,
+  parseEnvUpdate,
+  resolveWorkspaceEnv,
+  secretBackend,
+  updateWorkspaceEnv
+} from './workspace-env'
 
 type ControlSocket = { send(data: string): void }
+
+// Set at upgrade: whether the connection comes from moi's own OS user (see
+// peer-user.ts). Only that user may add workspaces.
+type ControlData = { fromMoiUser: boolean }
 
 // Resolve a control request's `path` to the registered workspace that contains
 // it — the entry itself or its nearest registered ancestor — so every
@@ -64,11 +77,12 @@ async function resolveWorkspace(
   return match
 }
 
-export const control = Bun.serve({
+export const control = Bun.serve<ControlData>({
   port: CONTROL_PORT,
   hostname: CONTROL_HOST,
   fetch(req, server) {
-    return server.upgrade(req)
+    const data = { fromMoiUser: isFromMoiUser(server.requestIP(req)) }
+    return server.upgrade(req, { data })
       ? new Response(null, { status: 101 })
       : new Response('Control WebSocket only', { status: 426 })
   },
@@ -78,6 +92,10 @@ export const control = Bun.serve({
         const data = JSON.parse(String(message))
 
         if (data.type === 'workspace:register') {
+          if (!ws.data.fromMoiUser) {
+            ws.send(JSON.stringify({ error: 'Only the user that runs moi can add workspaces' }))
+            return
+          }
           const absPath = resolve(String(data.path))
           const entry = await registerWorkspace(absPath)
           broadcastAll({ type: 'workspace:switch', workspaceId: entry.id })
@@ -359,6 +377,37 @@ export const control = Bun.serve({
             publishEvent({ type: 'applets:refresh', ...(data.only ? { only: data.only } : {}) })
           }
           ws.send(JSON.stringify({ ok: true }))
+          return
+        }
+
+        // `moi env` from a user that can't open moi's data folder (the agent on
+        // a managed machine) reads and writes the workspace env through here.
+        if (data.type === 'env:view') {
+          const match = await resolveWorkspace(ws, data.path)
+          if (!match) return
+          const view = await getWorkspaceEnvView(match.path, requiredEnvFor(match.path))
+          ws.send(JSON.stringify({ view }))
+          return
+        }
+
+        if (data.type === 'env:update') {
+          const match = await resolveWorkspace(ws, data.path)
+          if (!match) return
+          const patch = parseEnvUpdate(data.patch)
+          if (typeof patch === 'string') {
+            ws.send(JSON.stringify({ error: patch }))
+            return
+          }
+          await updateWorkspaceEnv(match.path, patch)
+          applyEnvChanged(match)
+          ws.send(JSON.stringify({ ok: true, backend: await secretBackend() }))
+          return
+        }
+
+        if (data.type === 'env:resolve') {
+          const match = await resolveWorkspace(ws, data.path)
+          if (!match) return
+          ws.send(JSON.stringify({ env: await resolveWorkspaceEnv(match.path) }))
           return
         }
 

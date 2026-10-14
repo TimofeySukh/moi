@@ -41,15 +41,17 @@ import type {
 
 import {
   execWithEnv,
-  notifyEnvChanged,
+  readEnvView,
   readSecretValue,
   renderEnvView,
-  resolveCwdWorkspace
+  resolveCwdWorkspace,
+  writeEnv
 } from './cli-env'
 import { columns, keyValue } from './cli-ui'
 import { installCollabSkill } from './collab/skill'
 import { CONTROL_HOST, CONTROL_PORT, CONTROL_URL, PORT } from './constants'
 import { type ControlProbe, controlFailureMessage, probeControlServer } from './control-client'
+import { canUseDataDir } from './data-dir'
 import {
   HARNESS_TYPES,
   type DetectedAgent,
@@ -101,12 +103,7 @@ import {
   updateArgv
 } from './update'
 import { VERSION, isPrerelease, versionWithCommit } from './version'
-import {
-  getWorkspaceEnvView,
-  isValidEnvKey,
-  secretBackend,
-  updateWorkspaceEnv
-} from './workspace-env'
+import { isValidEnvKey } from './workspace-env'
 import { provisionWorkspace } from './workspace-init'
 
 // ---- helpers ----------------------------------------------------------------
@@ -611,7 +608,8 @@ const start = defineCommand({
       }
       process.exit(1)
     }
-    console.log(`\n${pc.green('✓')} Server started on http://localhost:${PORT}`)
+    const { unixSocket } = getAppConfig()
+    console.log(`\n${pc.green('✓')} Server started on ${unixSocket ?? `http://localhost:${PORT}`}`)
     console.log(pc.dim('  Press Ctrl+C to stop\n'))
     // Stay alive as the server
   }
@@ -1220,13 +1218,12 @@ const envSet = defineCommand({
       }
     }
 
-    await updateWorkspaceEnv(entry.path, { set })
-    await notifyEnvChanged(entry.path)
+    const backend = await writeEnv(entry.path, { set })
     for (const key of Object.keys(set)) {
       console.log(pc.green('✓') + ` Set ${pc.bold(key)} ${pc.dim('(custom)')}`)
     }
     // A plaintext fallback should never go unnoticed at write time.
-    if ((await secretBackend()) === 'file') {
+    if (backend === 'file') {
       console.log(pc.dim('  Stored in a 0600 file — OS keychain unavailable.'))
     }
     process.exit(0)
@@ -1240,7 +1237,7 @@ const envUnset = defineCommand({
   },
   async run({ args }) {
     const entry = await resolveCwdWorkspace()
-    const view = await getWorkspaceEnvView(entry.path)
+    const view = await readEnvView(entry.path)
     const byKey = new Map(view.vars.map(v => [v.key, v]))
 
     // Only custom secrets are removable; a dotenv-sourced key lives in its file.
@@ -1265,8 +1262,7 @@ const envUnset = defineCommand({
     }
 
     if (removable.length > 0) {
-      await updateWorkspaceEnv(entry.path, { remove: removable })
-      await notifyEnvChanged(entry.path)
+      await writeEnv(entry.path, { remove: removable })
       for (const key of removable) {
         const v = byKey.get(key)
         const unshadow =
@@ -1311,10 +1307,7 @@ const env = defineCommand({
     const first = rawArgs.find(a => !a.startsWith('-'))
     if (first && Object.hasOwn(envSubCommands, first)) return
     const entry = await resolveCwdWorkspace()
-    // Lazy: required-env pulls the widget/view bundler chain (TS compiler),
-    // which must not load for every other `moi` command's startup.
-    const { requiredEnvFor } = await import('./required-env')
-    const view = await getWorkspaceEnvView(entry.path, requiredEnvFor(entry.path))
+    const view = await readEnvView(entry.path, { withRequired: true })
     console.log('\n' + renderEnvView(entry, view) + '\n')
     process.exit(0)
   }
@@ -3160,6 +3153,8 @@ function exitIfDemoBlocked(): void {
   const invoked = process.argv[2]
   if (!invoked || invoked === 'version' || invoked === 'start') return
   if (!(invoked in systemCommands)) return
+  // The agent on a managed machine can't read the config (see below).
+  if (!canUseDataDir()) return
   const config = getAppConfig()
   if (!config.cloudDemo) return
   console.log(
@@ -3173,6 +3168,21 @@ function exitIfDemoBlocked(): void {
   process.exit(1)
 }
 
+// Managed machines run the agent as its own OS user, which can't open moi's
+// data folder (docs/managed-machine.md). The system commands that set up or
+// run moi belong to the user that runs moi; `version` and `status` only read.
+function exitIfNotMoiUser(): void {
+  const invoked = process.argv[2]
+  if (!invoked || invoked === 'version' || invoked === 'status') return
+  if (!(invoked in systemCommands)) return
+  if (canUseDataDir()) return
+  console.log(
+    '\n' + pc.yellow('◆') + ` moi ${invoked} is only available to the user that runs moi.\n`
+  )
+  process.exit(1)
+}
+
+exitIfNotMoiUser()
 exitIfDemoBlocked()
 
 type HelpCommand = { meta?: unknown }

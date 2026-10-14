@@ -2,6 +2,9 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { mkdtemp, rm } from 'node:fs/promises'
 
+import { agentCommand } from '../agent-launcher'
+import { getAppConfig } from '../app-config'
+
 const MAX_TITLE_SOURCE_LENGTH = 1_000
 const MAX_GENERATED_TITLE_LENGTH = 64
 
@@ -71,7 +74,7 @@ export async function runSessionTitleCommand(input: {
 }): Promise<string | null> {
   if (input.signal.aborted) return null
   try {
-    const proc = Bun.spawn([...input.command], {
+    const proc = Bun.spawn(agentCommand(input.command), {
       cwd: input.cwd,
       stdin: new Blob([input.stdin ?? '']),
       stdout: 'pipe',
@@ -87,8 +90,21 @@ export async function runSessionTitleCommand(input: {
   }
 }
 
+// The title command runs as the agent's user on managed machines, so the folder
+// it works in must be the agent's own: create it through the launcher. moi can
+// still write the schema there, because it holds powers over the agent's files.
 export async function createSessionTitleTempDir(): Promise<string> {
-  return mkdtemp(join(tmpdir(), 'moi-session-title-'))
+  const prefix = join(tmpdir(), 'moi-session-title-')
+  if (!getAppConfig().agentLauncher) return mkdtemp(prefix)
+  const proc = Bun.spawn(agentCommand(['mktemp', '-d', `${prefix}XXXXXX`]), {
+    stdin: 'ignore',
+    stdout: 'pipe',
+    stderr: 'ignore'
+  })
+  const [exitCode, stdout] = await Promise.all([proc.exited, new Response(proc.stdout).text()])
+  const path = stdout.trim()
+  if (exitCode !== 0 || !path) throw new Error('Could not create a folder for the title command')
+  return path
 }
 
 export async function removeSessionTitleTempDir(path: string): Promise<void> {
