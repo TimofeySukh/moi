@@ -90,7 +90,8 @@ import {
   restartService,
   serviceLogPath,
   serviceStatus,
-  uninstallService
+  uninstallService,
+  webAddress
 } from './service'
 import {
   detectPackageManager,
@@ -535,13 +536,12 @@ const start = defineCommand({
         // Say who owns the running server: a service-managed one is expected
         // to be here, and `moi service` is how to manage it.
         const info = await queryServerInfo()
-        const port = info?.port || PORT
         if (info?.service) {
           console.log(
             '\n' +
               pc.yellow('◆') +
-              ' The moi service is already running on http://localhost:' +
-              port +
+              ' The moi service is already running on ' +
+              webAddress(info) +
               pc.dim(` (v${info.version})`) +
               '\n' +
               pc.dim('  Manage it with `moi service` — restart, logs, uninstall.') +
@@ -549,7 +549,7 @@ const start = defineCommand({
           )
         } else {
           console.log(
-            '\n' + pc.yellow('◆') + ' Server is already running on http://localhost:' + port + '\n'
+            '\n' + pc.yellow('◆') + ' Server is already running on ' + webAddress(info) + '\n'
           )
         }
         process.exit(0)
@@ -1121,7 +1121,10 @@ const status = defineCommand({
         ' Server is ' +
         pc.bold('running') +
         pc.dim(
-          `  (http port: ${info?.port || PORT}, control port: ${CONTROL_PORT}` +
+          (info?.unixSocket
+            ? `  (web socket: ${info.unixSocket}`
+            : `  (http port: ${info?.port || PORT}`) +
+            `, control port: ${CONTROL_PORT}` +
             (info?.pid ? `, pid: ${info.pid}` : '') +
             ')'
         )
@@ -2633,7 +2636,7 @@ function printServiceServer(info: Awaited<ReturnType<typeof queryServerInfo>>) {
     console.log(
       '  server   ' +
         pc.bold(`v${info.version}`) +
-        ` running on http://localhost:${info.port}` +
+        ` running on ${webAddress(info)}` +
         pc.dim(` (pid ${info.pid})`)
     )
     const mismatch = versionMismatchNotice(info.version)
@@ -2837,7 +2840,7 @@ async function runServiceStatus() {
       console.log(
         '  server   ' +
           pc.bold(`v${info.version}`) +
-          pc.dim(` on http://localhost:${info.port} (pid ${info.pid})`)
+          pc.dim(` on ${webAddress(info)} (pid ${info.pid})`)
       )
       if (!info.service) {
         console.log(

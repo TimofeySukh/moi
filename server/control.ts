@@ -8,6 +8,7 @@ import { resolveUrl } from '@/lib/navigation'
 import { isWorkspaceTabId } from '@/lib/workspace-tabs'
 import { navigationRelay } from './navigation-relay'
 
+import { getAppConfig } from './app-config'
 import { clearAppletLog, getAppletLog, getAppletLogCount } from './applet-log'
 import { serializeWorkspaceBundle } from './bundle-queue'
 import { CONTROL_HOST, CONTROL_PORT, PORT } from './constants'
@@ -119,6 +120,7 @@ export const control = Bun.serve<ControlData>({
               version: VERSION,
               pid: process.pid,
               port: PORT,
+              unixSocket: getAppConfig().unixSocket ?? undefined,
               service: !!process.env.MOI_SERVICE
             })
           )
